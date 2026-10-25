@@ -21,6 +21,22 @@ Nothing you enter is saved. Everything is handled in memory while the app is ope
 
 ---
 
+## Voice models used (Sarvam AI)
+ 
+| Purpose | Model | Languages |
+|---|---|---|
+| Speech to text (speak your prompt) | `saaras:v3` (mode: transcribe) | English (`en-IN`), Hindi (`hi-IN`) |
+| Text to speech (hear the risk summary) | `bulbul:v3` (speaker: `shubh`) | English (`en-IN`), Hindi (`hi-IN`) |
+ 
+**Why Sarvam:** these models are built for Indian languages and accents, and they cope well with people mixing Hindi and English in the same sentence, which is how many of us actually speak. That suits an app meant for Indian users.
+ 
+**Why these versions:**
+- `saaras:v3` is Sarvam's current recommended speech-to-text model. The older `saarika:v2.5` is marked for retirement, so we avoided building on it.
+- `bulbul:v3` is the latest text-to-speech model. It handles mixed Hindi-English text and numbers more naturally than the older `bulbul:v2`, and accepts longer text (up to 2,500 characters).
+Model names and available voices can change. Check the [Sarvam documentation](https://docs.sarvam.ai) if a voice request fails.
+ 
+---
+
 ## Project structure
 
 ```text
