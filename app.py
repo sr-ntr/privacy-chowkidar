@@ -1,7 +1,7 @@
 """app.py - Privacy Chowkidar (Streamlit Application).
 
 In-memory privacy pre-flight scanner for prompts, files, and images before sending to LLMs.
-Bilingual support in English and Hindi.
+Bilingual support in English and Hindi, with voice assistant (STT + TTS).
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ import pandas as pd
 from detectors import scan_text, redact, calculate_risk_level
 from extractors import extract_uploaded_file, extract_from_text
 from i18n import t
+from voice import transcribe_audio, text_to_speech, build_spoken_summary
 
 # Configure page
 st.set_page_config(
@@ -18,6 +19,10 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# Initialize session state for prompt text
+if "prompt_text" not in st.session_state:
+    st.session_state["prompt_text"] = ""
 
 # Sidebar Language Selection
 lang_selection = st.sidebar.radio(
@@ -87,15 +92,39 @@ with st.sidebar:
 st.title(t("app_title", lang_code))
 st.markdown(t("tagline", lang_code))
 
-# Tabs for input mode
-tab_prompt, tab_file = st.tabs([t("tab_prompt", lang_code), t("tab_file", lang_code)])
+# Tabs for input mode: Text Prompt, File Upload, Voice Prompt
+tab_prompt, tab_file, tab_voice = st.tabs([
+    t("tab_prompt", lang_code),
+    t("tab_file", lang_code),
+    t("tab_voice", lang_code),
+])
 
 raw_content = ""
 warning_msg = None
 
+with tab_voice:
+    st.subheader(t("voice_header", lang_code))
+    st.caption(t("voice_privacy_warning", lang_code))
+
+    # st.audio_input returns an UploadedFile-like object or bytes
+    if hasattr(st, "audio_input"):
+        audio_prompt = st.audio_input(t("voice_record_prompt", lang_code), key="voice_input_widget")
+        if audio_prompt is not None:
+            audio_bytes = audio_prompt.getvalue() if hasattr(audio_prompt, "getvalue") else audio_prompt.read()
+            with st.spinner("Transcribing speech... / ऑडियो ट्रांसक्राइब हो रहा है..."):
+                transcript, err = transcribe_audio(audio_bytes, lang=lang_code)
+                if err:
+                    st.warning(err)
+                elif transcript:
+                    st.success(f"{t('voice_transcribed', lang_code)} **{transcript}**")
+                    st.session_state["prompt_text"] = transcript
+    else:
+        st.info("st.audio_input requires Streamlit 1.35+. Please update Streamlit to enable direct recording.")
+
 with tab_prompt:
     prompt_input = st.text_area(
         t("prompt_label", lang_code),
+        value=st.session_state.get("prompt_text", ""),
         height=180,
         placeholder=t("prompt_placeholder", lang_code),
         key="text_prompt_input",
@@ -139,6 +168,18 @@ if raw_content:
     col2.metric(t("metric_high", lang_code), sev_counts["High"])
     col3.metric(t("metric_medium", lang_code), sev_counts["Medium"])
     col4.metric(t("metric_low", lang_code), sev_counts["Low"])
+
+    # Spoken Audio Risk Summary Button
+    spoken_summary_text = build_spoken_summary(risk_localized, findings, lang=lang_code)
+    tts_col1, tts_col2 = st.columns([1, 2])
+    with tts_col1:
+        if st.button(t("voice_read_summary", lang_code), key="btn_read_aloud"):
+            with st.spinner(t("tts_generating", lang_code)):
+                audio_bytes, tts_err = text_to_speech(spoken_summary_text, lang=lang_code)
+                if tts_err:
+                    st.error(tts_err)
+                elif audio_bytes:
+                    st.audio(audio_bytes, format="audio/mp3")
 
     if findings:
         st.subheader(t("detected_heading", lang_code))
