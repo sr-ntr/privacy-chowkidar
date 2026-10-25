@@ -1,11 +1,9 @@
 """voice.py - Bilingual Voice Assistant for Privacy Chowkidar.
 
 Powered entirely by Sarvam AI:
-- Speech-to-Text (STT): Sarvam Saaras model via client.speech_to_text.transcribe
-  Accepts WAV bytes from st.audio_input. No PyAudio or Microphone class used.
-- Text-to-Speech (TTS): Sarvam Bulbul model via client.text_to_speech.convert
-  Returns WAV audio bytes to play via st.audio.
-- Risk Summary via sarvam-105b-conversations for intelligent, context-aware summaries.
+- Speech-to-Text (STT): Sarvam Saaras (saaras:v3) via REST API with requests
+- Text-to-Speech (TTS): Sarvam Bulbul (bulbul:v2) via SDK
+- Risk summaries: sarvam-105b-conversations via SDK
 
 All audio processing is strictly in-memory. No files are written to disk.
 """
@@ -16,73 +14,101 @@ import io
 import os
 from typing import Any, Dict, List, Tuple
 
+import requests
 
-def _get_client():
-    """Initialise and return a SarvamAI client using the SARVAM_API_KEY env var."""
+SARVAM_STT_URL = "https://api.sarvam.ai/speech-to-text"
+SARVAM_STT_MODEL = "saaras:v3"
+LANG_CODES = {"en": "en-IN", "hi": "hi-IN"}
+
+
+def _api_key() -> str | None:
+    """Resolve SARVAM_API_KEY from Streamlit secrets (Cloud) or environment (.env / shell)."""
+    try:
+        import streamlit as st
+        key = st.secrets.get("SARVAM_API_KEY", "")
+        if key:
+            return key
+    except Exception:
+        pass
+    return os.getenv("SARVAM_API_KEY")
+
+
+def _get_sdk_client():
+    """Initialise and return a SarvamAI SDK client."""
     try:
         from sarvamai import SarvamAI
     except ImportError:
-        return None, "Library 'sarvamai' is not installed. Please run: pip install sarvamai"
+        return None, "Library 'sarvamai' is not installed. Run: pip install sarvamai"
 
-    api_key = os.getenv("SARVAM_API_KEY")
-    if not api_key:
-        return None, "SARVAM_API_KEY is not set. Please add it to your .env file."
+    key = _api_key()
+    if not key:
+        return None, "SARVAM_API_KEY is not set. Add it to .env or .streamlit/secrets.toml"
 
-    return SarvamAI(api_subscription_key=api_key), None
+    return SarvamAI(api_subscription_key=key), None
 
 
 def transcribe_audio(audio_bytes: bytes, lang: str = "en") -> Tuple[str, str | None]:
-    """Transcribe audio bytes using Sarvam Saaras STT model.
+    """Transcribe audio bytes using Sarvam Saaras STT REST API (saaras:v3).
 
-    Uses language codes 'hi-IN' for Hindi and 'en-IN' for English.
-    Accepts raw WAV/WebM bytes from st.audio_input — no PyAudio or Microphone required.
+    Sends WAV bytes from st.audio_input directly to the REST endpoint
+    using requests — bypasses SDK parameter naming issues entirely.
+    No PyAudio or Microphone class required.
     """
     if not audio_bytes:
         return "", None
 
-    client, err = _get_client()
-    if err:
-        return "", err
-
-    lang_code = "hi-IN" if lang == "hi" else "en-IN"
+    key = _api_key()
+    if not key:
+        return "", "SARVAM_API_KEY is not set. Add it to .env or .streamlit/secrets.toml"
 
     try:
-        response = client.speech_to_text.transcribe(
-            file=("audio.wav", io.BytesIO(audio_bytes), "audio/wav"),
-            model="saaras:v2",
-            language_code=lang_code,
+        resp = requests.post(
+            SARVAM_STT_URL,
+            headers={"api-subscription-key": key},
+            files={"file": ("audio.wav", audio_bytes, "audio/wav")},
+            data={
+                "model": SARVAM_STT_MODEL,
+                "mode": "transcribe",
+                "language_code": LANG_CODES.get(lang, "en-IN"),
+            },
+            timeout=30,
         )
-        transcript = getattr(response, "transcript", "") or ""
-        if not transcript.strip():
+
+        if resp.status_code != 200:
+            try:
+                msg = resp.json()["error"]["message"]
+            except Exception:
+                msg = resp.text[:300]
+            err = f"Sarvam STT error ({resp.status_code}): {msg}"
+            return "", err
+
+        transcript = resp.json().get("transcript", "").strip()
+        if not transcript:
             msg = (
-                "आवाज़ स्पष्ट नहीं थी या कोई आवाज़ नहीं मिली।"
+                "आवाज़ स्पष्ट नहीं थी या कोई आवाज़ नहीं मिली। दोबारा कोशिश करें।"
                 if lang == "hi"
                 else "No speech detected. Please try speaking closer to the microphone."
             )
             return "", msg
-        return transcript.strip(), None
+        return transcript, None
+
+    except requests.Timeout:
+        return "", "Sarvam STT request timed out. Check your connection and try again."
     except Exception as e:
-        err_str = str(e)
-        msg = (
-            f"सर्वम एसटीटी त्रुटि: {err_str}"
-            if lang == "hi"
-            else f"Sarvam STT error: {err_str}"
-        )
-        return "", msg
+        return "", f"Sarvam STT error: {str(e)}"
 
 
 def build_spoken_summary(
     risk_level: str, findings: List[Dict[str, Any]], lang: str = "en"
 ) -> str:
-    """Generate a bilingual spoken risk summary using Sarvam sarvam-105b-conversations.
+    """Generate a bilingual spoken risk summary using sarvam-105b-conversations.
 
-    Falls back to a static template if the API is unavailable (no credits, no key, etc).
+    Falls back to a static template if the API is unavailable.
     """
     count = len(findings)
     types = list({f["type"] for f in findings})
     types_str = ", ".join(types[:3]) if types else "none"
 
-    # Build the LLM prompt
     if lang == "hi":
         system_prompt = (
             "You are a bilingual privacy assistant. "
@@ -106,7 +132,7 @@ def build_spoken_summary(
             "Give a 2-3 sentence spoken privacy warning summary."
         )
 
-    client, err = _get_client()
+    client, err = _get_sdk_client()
     if not err and client:
         try:
             response = client.chat.completions(
@@ -122,9 +148,9 @@ def build_spoken_summary(
             if summary and summary.strip():
                 return summary.strip()
         except Exception:
-            pass  # Fall through to static template below
+            pass  # Fall through to static template
 
-    # Static fallback if LLM is unavailable
+    # Static fallback
     if not findings:
         if lang == "hi":
             return "प्राइवेसी चौकीदार रिपोर्ट: कोई संवेदनशील डेटा नहीं मिला। यह प्रॉम्प्ट भेजना पूरी तरह सुरक्षित है।"
@@ -144,19 +170,14 @@ def build_spoken_summary(
 
 
 def text_to_speech(text: str, lang: str = "en") -> Tuple[bytes | None, str | None]:
-    """Convert text to spoken audio bytes using Sarvam Bulbul TTS model.
-
-    Returns WAV audio bytes (base64-decoded from the API response) suitable
-    for direct playback via st.audio.
-    """
+    """Convert text to WAV audio bytes using Sarvam Bulbul TTS (bulbul:v2)."""
     if not text:
         return None, "Empty text provided for TTS."
 
-    client, err = _get_client()
+    client, err = _get_sdk_client()
     if err:
         return None, err
 
-    # Pick natural-sounding speakers per language
     lang_code = "hi-IN" if lang == "hi" else "en-IN"
     speaker = "ritu_hi_conversation" if lang == "hi" else "ritu_en_edtech"
 
@@ -168,12 +189,10 @@ def text_to_speech(text: str, lang: str = "en") -> Tuple[bytes | None, str | Non
             model="bulbul:v2",
             output_audio_codec="wav",
         )
-        # response.audios is a list of base64-encoded audio strings
         if not response.audios:
             return None, "Sarvam TTS returned no audio."
 
-        audio_b64 = response.audios[0]
-        audio_bytes = base64.b64decode(audio_b64)
+        audio_bytes = base64.b64decode(response.audios[0])
         return audio_bytes, None
     except Exception as e:
         return None, f"Sarvam TTS error: {str(e)}"
