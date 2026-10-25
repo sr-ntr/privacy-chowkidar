@@ -83,19 +83,6 @@ Open `http://localhost:8501` in your browser.
 
 ---
 
-## Deploy on Streamlit Community Cloud
-
-1. Push the project to GitHub.
-2. Go to [share.streamlit.io](https://share.streamlit.io) and sign in with GitHub.
-3. Click **Create app**, choose your repository, the `main` branch, and `app.py` as the main file.
-4. Under **Advanced settings**, choose Python 3.11 and paste this into **Secrets**:
-   ```toml
-   SARVAM_API_KEY = "your-key-here"
-   ```
-5. Click **Deploy**. Streamlit installs `requirements.txt` and `packages.txt` automatically.
-
----
-
 ## Try it with sample text
 
 Paste this (all fake data) into the prompt box:
@@ -141,9 +128,3 @@ You should see:
 - Speech that runs fully on your device, so no audio leaves your computer.
 - Detection of names, addresses and organisations using language models.
 - A proxy that cleans prompts automatically before they reach an AI service.
-
----
-
-## License
-
-MIT License. See [LICENSE](LICENSE).
