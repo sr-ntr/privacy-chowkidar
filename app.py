@@ -2,11 +2,26 @@
 
 In-memory privacy pre-flight scanner for prompts, files, and images before sending to LLMs.
 Bilingual support in English and Hindi, with voice assistant (STT + TTS).
+
+Sarvam AI powers all voice and LLM features:
+  - Speech-to-Text: Sarvam Saaras (saaras:v2)
+  - Text-to-Speech: Sarvam Bulbul (bulbul:v2)
+  - Risk summaries: sarvam-105b-conversations
 """
 
 from __future__ import annotations
+import os
+from pathlib import Path
+
 import streamlit as st
 import pandas as pd
+
+# Load .env so SARVAM_API_KEY is available to voice.py at runtime
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent / ".env")
+except ImportError:
+    pass  # python-dotenv optional; key may already be in environment
 from detectors import scan_text, redact, calculate_risk_level
 from extractors import extract_uploaded_file, extract_from_text
 from i18n import t
